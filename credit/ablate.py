@@ -1,0 +1,174 @@
+
+from __future__ import annotations
+import re
+
+def text_tokens(code: str, el, next_tag_start: int | None = None):
+    a = el["end"]
+    b = code.find("<", a)
+    if b < 0 or b <= a:
+        return []
+    raw = code[a:b]
+    if not raw.strip() or "{" in raw:
+        return []
+    lead = len(raw) - len(raw.lstrip())
+    return [{"start": a + lead, "end": a + len(raw.rstrip()), "kind": "text",
+             "value": raw.strip(), "replacement": ""}]        # DELETE the text
+
+
+def credit_tokens(code, elements, render_score, *, band_weights,
+                  min_delta=0.5, max_tokens=None, dead=None, verbose=False):
+    """dead: {element_src -> set(values)} from resolve.dead_value_map. Any
+    candidate whose (owning element, value) is in it is skipped WITHOUT a render,
+    because a token that moves no computed style cannot move the render. Absent
+    -> no pruning. This is the only place the computed-style pre-filter touches
+    the credit loop; it changes how many renders happen, never the credit math."""
+    base = render_score(code)
+    if base is None:
+        return {"tokens": [], "counts": {}, "baseline": None, "n_candidates": 0,
+                "n_pruned": 0}
+    dead = dead or {}
+    out = []
+    cands = []
+    for el in elements:
+        src = f'{el["start"]}:{el["end"]}'
+        # Structural tokenizers (deletion-based, whole-utility granularity) so
+        # the candidate VALUES match the computed-style resolver's, letting the
+        # dead-set prune by value. utility_tokens: class utils + inline styles;
+        # attr_tokens: SVG/host attributes; text_tokens: rendered copy.
+        toks = (utility_tokens(code, el["start"], el["end"])
+                + attr_tokens(code, el["start"], el["end"])
+                + text_tokens(code, el))
+        for t in toks:
+            t["owner"] = src
+            cands.append(t)
+    n_all = len(cands)
+    cands = [t for t in cands if t["value"] not in dead.get(t["owner"], ())]
+    n_pruned = n_all - len(cands)
+    cands.sort(key=lambda d: d["start"])
+    if max_tokens:
+        cands = cands[:max_tokens]
+
+    for t in cands:
+        patched = code[:t["start"]] + t["replacement"] + code[t["end"]:]
+        got = render_score(patched)
+        if got is None:
+            continue                          # broke the render: no evidence
+        moved = {}
+        for b, v0 in base.items():
+            d = abs(float(got.get(b, v0)) - float(v0))
+            if d >= min_delta:
+                moved[b] = d
+        if verbose:
+            print(f"    {t['kind']:<15} {t['value'][:18]:<20} -> "
+                  + (", ".join(f"{b} {d:+.1f}" for b, d in moved.items()) or "(no band moved)"))
+        if moved:
+            out.append({**t, "bands": moved})
+
+    totals: dict[str, float] = {}
+    for t in out:
+        for b, d in t["bands"].items():
+            totals[b] = totals.get(b, 0.0) + d
+    counts: dict[str, int] = {}
+    for t in out:
+        for b in t["bands"]:
+            counts[b] = counts.get(b, 0) + 1
+    for t in out:
+        t["score"] = float(sum(band_weights.get(b, 0.0) * d / totals[b]
+                               for b, d in t["bands"].items() if totals.get(b, 0.0) > 0))
+    out.sort(key=lambda d: -d["score"])
+    if verbose:
+        print("\n  tokens affecting each band: "
+              + "  ".join(f"{b}={counts.get(b, 0)}" for b in band_weights))
+    return {"tokens": out, "counts": counts, "baseline": base,
+            "n_candidates": len(cands), "n_pruned": n_pruned}
+
+
+
+CLASS_ATTR = re.compile(r'className\s*=\s*"([^"]*)"')
+STYLE_ATTR = re.compile(r"style\s*=\s*\{\{([^}]*)\}\}")
+
+
+def utility_tokens(code: str, start: int, end: int):
+    seg = code[start:end]
+    out = []
+    for m in CLASS_ATTR.finditer(seg):
+        body, base = m.group(1), m.start(1)
+        for um in re.finditer(r"\S+", body):
+            out.append({"start": start + base + um.start(),
+                        "end": start + base + um.end(),
+                        "kind": "utility", "value": um.group(0),
+                        "replacement": ""})
+    for m in STYLE_ATTR.finditer(seg):
+        body, base = m.group(1), m.start(1)
+        decls = [d for d in re.finditer(r"[^,]+", body) if ":" in d.group(0)]
+        for i, dm in enumerate(decls):
+            # A declaration must take a comma with it. Deleting the text alone
+            # leaves `{{, height: ... }}` or `{{ width: ...,}}`, both of which
+            # are syntax errors -- Babel then fails, the render returns None,
+            # and the token is silently dropped as "no evidence". Unlike a class
+            # utility (removing a substring from a string literal is always
+            # valid), object literals have separators that must be maintained.
+            a, b = dm.start(), dm.end()
+            after = body.find(",", b)
+            if after != -1:
+                b = after + 1                      # swallow the following comma
+            else:
+                before = body.rfind(",", 0, a)
+                if before != -1:
+                    a = before                     # or the preceding one
+            out.append({"start": start + base + a,
+                        "end": start + base + b,
+                        "kind": "style_decl", "value": dm.group(0).strip(),
+                        "replacement": ""})
+    out.sort(key=lambda d: d["start"])
+    return out
+
+
+ATTR = re.compile(r'([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|\{([^{}]*)\})')
+COLOUR_SHAPE = re.compile(r"^\s*(#[0-9a-fA-F]{3,8}|(?:rgb|rgba|hsl|hsla)\([^)]*\)"
+                          r"|white|black|currentColor|none|transparent)\s*$", re.I)
+NUMBER_SHAPE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)(px|rem|em|%|)\s*$")
+
+
+def _shape_of(value: str):
+    """(kind, replacement) from the value's shape alone, or (None, None)."""
+    if COLOUR_SHAPE.match(value):
+        v = value.strip().lower()
+        return "colour", ("#0E7A9C" if v in ("#5a2e10",) else "#5A2E10")
+    m = NUMBER_SHAPE.match(value)
+    if m:
+        n, unit = float(m.group(1)), m.group(2)
+        return "number", f"{max(1, int(round(n * 1.6))) if n else 6}{unit}"
+    return None, None
+
+
+def attr_tokens(code: str, start: int, end: int, *, skip=("data-w2c-src",)):
+    """Every attribute in one opening tag, at the right granularity.
+
+    className and style keep their internal structure (a utility / a
+    declaration is the meaningful unit). Every other attribute is one token:
+    substituted when its value has a recognisable shape, deleted otherwise.
+    Deleting a whole `name="value"` from a tag is always valid syntax.
+    """
+    seg = code[start:end]
+    out = []
+    for m in ATTR.finditer(seg):
+        name = m.group(1)
+        if name in skip:
+            continue
+        if name == "className" or name == "style":
+            continue                      # handled by utility_tokens
+        quoted = m.group(2) is not None
+        value = m.group(2) if quoted else (m.group(3) or "")
+        vs = m.start(2) if quoted else m.start(3)
+        kind, rep = _shape_of(value)
+        if kind and quoted:
+            out.append({"start": start + vs, "end": start + vs + len(value),
+                        "kind": f"attr_{kind}", "value": value, "replacement": rep})
+        else:
+            # opaque (a path's `d`, a viewBox, an href): drop the attribute
+            out.append({"start": start + m.start(), "end": start + m.end(),
+                        "kind": "attr_drop", "value": f"{name}={value[:24]}",
+                        "replacement": ""})
+    out.sort(key=lambda d: d["start"])
+    return out

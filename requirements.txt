@@ -1,0 +1,25 @@
+# WidgetFlow — self-contained. No dependency on the Widget2Code repos.
+# After install, fetch the render engine's browser:  playwright install chromium
+# The policy weights are pulled by HF id (Qwen/Qwen3-VL-8B-Instruct); set it in
+# model/loader.py (MODEL_ID) and have them cached locally (HF_HUB_OFFLINE-friendly).
+
+# --- policy (model + LoRA + log-probs) ---
+torch>=2.4
+transformers>=5.0            # needs AutoModelForImageTextToText / Qwen3-VL support
+peft>=0.11
+accelerate>=0.30
+
+# --- rendering (network-free; React/Babel/Tailwind bundled under generator/static) ---
+playwright>=1.44
+
+# --- scoring bands (layout / style / perceptual / legibility) ---
+numpy>=1.24
+pillow>=10.0
+opencv-python>=4.9
+scikit-image>=0.22
+scipy>=1.11
+lpips>=0.1.4                 # perceptual band
+easyocr>=1.7                 # legibility band (optional; skipped by default)
+
+# --- data ---
+datasets>=2.19              # Djanghao/widget2code-benchmark
