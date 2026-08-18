@@ -3,7 +3,7 @@ import re
 
 def text_tokens(code: str, el, next_tag_start: int | None = None):
     a = el["end"]
-    b = code.find("<", a)
+    b = code.find("<", a) # by construction we cannot contain any tag 
     if b < 0 or b <= a:
         return []
     raw = code[a:b]
@@ -55,7 +55,7 @@ def credit_tokens(code, elements, render_score, *, band_weights,
             print(f"    {t['kind']:<15} {t['value'][:18]:<20} -> "
                   + (", ".join(f"{b} {d:+.1f}" for b, d in moved.items()) or "(no band moved)"))
         if moved:
-            out.append({**t, "bands": moved})
+            out.append({**t, "bands": moved}) # important
 
     totals: dict[str, float] = {}
     for t in out:
@@ -73,7 +73,7 @@ def credit_tokens(code, elements, render_score, *, band_weights,
         print("\n  tokens affecting each band: "
               + "  ".join(f"{b}={counts.get(b, 0)}" for b in band_weights))
     return {"tokens": out, "counts": counts, "baseline": base,
-            "n_candidates": len(cands), "n_pruned": n_pruned}
+            "n_candidates": len(cands), "n_pruned": n_pruned} # at this  point in time we have all the tokens with their normalized score for band
 
 
 CLASS_ATTR = re.compile(r'className\s*=\s*"([^"]*)"')
@@ -154,3 +154,6 @@ def attr_tokens(code: str, start: int, end: int, *, skip=("data-w2c-src",)):
                         "replacement": ""})
     out.sort(key=lambda d: d["start"])
     return out
+
+# notes : ablate.py essentially deletes tokens, computes score, checks the scored does correct weighting 
+# uses regex to find attribute, utility tokens, zeros them
