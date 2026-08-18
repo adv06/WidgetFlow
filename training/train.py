@@ -1,16 +1,3 @@
-"""End-to-end WidgetFlow training: Qwen3-VL-8B-Instruct + LoRA, DAPO on the
-widget2code-benchmark train split. Wires every box of the architecture:
-
-  TrainFilter(130) -> Policy(N=8 rollouts) -> render_and_score -> dapo_loss(step)
-                   -> metric_probe(60 held-out) -> Controller -> rotation -> swap
-                   -> stop when every band >= baseline + delta.
-
-Self-contained: model log-probs via the vendored model/loader.py (correct Qwen3-VL
-M-RoPE), rendering via the vendored generator/, scoring via the vendored reward/.
-
-Run (does a real multi-hour run; pick GPUs deliberately):
-  CUDA_VISIBLE_DEVICES=4 python -m training.train --passes 20 --cache data/wtargets
-"""
 from __future__ import annotations
 
 import argparse
@@ -35,8 +22,7 @@ DATASET = "Djanghao/widget2code-benchmark"
 
 
 def materialize(cache: Path, limit=0):
-    """Save train-split images to PNGs once; return [png_path] by index. limit>0
-    streams only the first `limit` rows (smoke tests, no full download)."""
+
     from datasets import load_dataset
     cache.mkdir(parents=True, exist_ok=True)
     if limit:
@@ -78,7 +64,7 @@ def main():
     def image_of(i):
         return Image.open(png[i]).convert("RGB")
 
-    # 60 held-out for the probe; the rest is the rotating training pool.
+
     val_idx = list(range(args.val_size))
     pool = list(range(args.val_size, len(png)))
     val = [(image_of(i), png[i]) for i in val_idx]
@@ -99,12 +85,12 @@ def main():
         for idx in widgets:
             rollouts = policy.rollout(image_of(idx), n=args.K)
             scored = render_and_score(png[idx], rollouts, weights=ctrl.w, score_fn=score_bands)
-            varmap[idx] = [s.reward for s in scored]                 # rotation ranks on this
+            varmap[idx] = [s.reward for s in scored]
             credit = (credit_weights(scored, policy.tok, png[idx], alpha=args.credit_alpha,
                                      max_tokens=args.credit_max_tokens, score_fn=score_bands)
-                      if args.credit else {})                        # Credit Weighting box
+                      if args.credit else {})
             loss = dapo_loss(policy, scored, credit=credit)
-            if loss is None:                                         # no reward spread -> skip
+            if loss is None:
                 continue
             (loss / args.grad_accum).backward()
             pending += 1
@@ -120,7 +106,7 @@ def main():
         if report["passed"]:
             print("[stop] all bands >= baseline + delta -> run eval on 1000")
             break
-        tf.swap(to_drop(varmap, args.rotate))                       # rotation -> update pool
+        tf.swap(to_drop(varmap, args.rotate))
 
 
 def fmt(d):

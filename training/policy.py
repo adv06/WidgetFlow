@@ -6,14 +6,14 @@ from model.loader import (load_policy, load_processor, prepare_inputs,
                           token_logprobs, sample, MODEL_ID)
 
 
-@dataclass(eq=False)           # identity hash/eq: used as dict keys in the credit map
+@dataclass(eq=False)
 class Rollout:
-    inp: dict                  # prepared prompt inputs (image + ids + mm_token_type_ids)
+    inp: dict
     prompt_len: int
-    comp_ids: torch.Tensor     # generated JSX token ids
-    old_logprob: torch.Tensor  # per-token logprob under the behaviour policy (detached)
-    text: str                  # decoded JSX, for Render & Score
-    truncated: bool = False    # hit max_new_tokens without EOS (renders to nothing)
+    comp_ids: torch.Tensor
+    old_logprob: torch.Tensor
+    text: str
+    truncated: bool = False
 
 
 class Policy:
@@ -55,4 +55,4 @@ class Policy:
         return out
 
     def logprob(self, r):
-        return token_logprobs(self.model, r.inp, r.prompt_len, r.comp_ids)  # differentiable
+        return token_logprobs(self.model, r.inp, r.prompt_len, r.comp_ids)

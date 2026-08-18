@@ -5,24 +5,25 @@ from credit.credit import BandScorer, BANDS
 
 
 @torch.no_grad()
-def _greedy(policy, widget):
+def _greedy(policy, widget, max_new_tokens):
     enc = policy._inputs(widget)
     plen = enc["input_ids"].shape[1]
-    out = policy.model.generate(**enc, do_sample=False, max_new_tokens=policy.max_new_tokens)
+    out = policy.model.generate(**enc, do_sample=False, max_new_tokens=max_new_tokens)
     return policy.processor.decode(out[0, plen:], skip_special_tokens=True)
 
 
 @torch.no_grad()
-def metric_probe(policy, widgets, *, baseline=None, delta=0.0, score_fn=None):
+def metric_probe(policy, widgets, *, baseline=None, delta=0.0, score_fn=None,
+                 max_new_tokens=4096):
     was_training = policy.model.training
     policy.model.eval()
     totals = {b: [] for b in BANDS}
     try:
-        for image, gt_path in widgets:          # each val widget: (PIL image, target png)
+        for image, gt_path in widgets:
             with BandScorer(gt_path, scorer=score_fn) as s:
-                bands = s(_greedy(policy, image)) or {}
+                bands = s(_greedy(policy, image, max_new_tokens)) or {}
             for b in BANDS:
-                totals[b].append(bands.get(b, 0.0))     # failed / missing band -> 0
+                totals[b].append(bands.get(b, 0.0))
     finally:
         policy.model.train(was_training)
 

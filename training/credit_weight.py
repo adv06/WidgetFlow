@@ -4,13 +4,7 @@ from credit.credit import BandScorer, credit_widget
 
 
 def token_char_offsets(tok, comp_ids):
-    """Char [start, end) of every completion token within decode(comp_ids).
 
-    Returns exactly len(comp_ids) spans, aligned to the ACTUAL sampled ids (not a
-    re-tokenisation that might differ). Fast path: if re-tokenising the decoded
-    text reproduces the ids, use the tokenizer's own offset mapping. Exact
-    fallback: cumulative-decode length per prefix (monotonic in the id sequence).
-    """
     ids = [int(t) for t in comp_ids]
     text = tok.decode(ids, skip_special_tokens=True)
     try:
@@ -42,19 +36,18 @@ def rollout_token_weights(r, tok, credit_tokens, *, alpha=3.0):
             continue
         best = 0.0
         for a, b, score in spans:
-            if ts < b and a < te:                 # char-span overlap
+            if ts < b and a < te:
                 best = max(best, score / top)
         if best > 0.0:
             w[i] = 1.0 + (alpha - 1.0) * best
-    w = (w + [1.0] * n)[:n]                        # keep length == comp_ids
+    w = (w + [1.0] * n)[:n]
     return torch.tensor(w, dtype=torch.float32, device=r.comp_ids.device)
 
 
 def credit_weights(scored, tok, gt_path, *, alpha=3.0, max_tokens=None,
                    min_delta=0.5, score_fn=None, verbose=False):
-   
-    # Only rollouts that actually rendered (non-empty bands) have a visual to
-    # ablate; a failed/truncated render is below-mean but has no evidence.
+
+
     below = [x for x in scored if x.below_mean and x.bands]
     if not below:
         return {}
@@ -63,14 +56,12 @@ def credit_weights(scored, tok, gt_path, *, alpha=3.0, max_tokens=None,
         for x in below:
             r = x.rollout
             try:
-                # prefilter=False: skip the computed-style dead-token pass (a cost
-                # optimisation only; per ALGORITHM.md it never changes the credit
-                # math). Can be re-enabled now that the vendored renderer has
-                # _build_html, but ablating every candidate is simplest and correct.
+
+
                 res = credit_widget(r.text, scorer, min_delta=min_delta,
                                     max_tokens=max_tokens, prefilter=False, verbose=verbose)
             except Exception:
-                continue                     # flaky render -> no evidence, weight stays 1.0
+                continue
             toks = res.get("tokens", [])
             if toks:
                 weights[r] = rollout_token_weights(r, tok, toks, alpha=alpha)

@@ -32,7 +32,7 @@ class BandScorer:
         try:
             from reward.scorer import score_bands
             return score_bands
-        except Exception as exc:                       # pragma: no cover
+        except Exception as exc:
             raise RuntimeError(
                 "no band scorer available; pass scorer=... explicitly") from exc
 
@@ -46,7 +46,7 @@ class BandScorer:
             self._r = None
         return False
 
-    # -- the callable credit_tokens expects -------------------------------
+
     def __call__(self, code: str):
         if self._r is None:
             raise RuntimeError("use BandScorer as a context manager")
@@ -56,8 +56,8 @@ class BandScorer:
             self._r.render(code, "", self.w, self.h, png)
             bands, _ = self._score_bands(self.gt, load_image(str(png)),
                                          use_cuda=self.use_cuda, skip=self.skip)
-            # score_bands returns a BandScores dataclass (no __contains__); take a
-            # plain dict so `b in bd` doesn't raise and get swallowed as None.
+
+
             bd = bands.as_dict() if hasattr(bands, "as_dict") else bands
             return {b: float(bd[b]) for b in BANDS if b in bd}
         except Exception:
@@ -89,11 +89,7 @@ def spans(trace) -> list[dict]:
 
 def credit_widget(code: str, scorer: BandScorer, *, band_weights=None,
                   min_delta=0.5, max_tokens=None, prefilter=True, verbose=False):
-    """Full pipeline for one rollout: trace -> prune dead -> ablate -> normalise.
 
-    prefilter runs the computed-style pass first: tokens that change no computed
-    property are dropped before any render, since they cannot move the reward.
-    """
     dead = {}
     if prefilter:
         res = resolve_dead(scorer._r, code, scorer.w, scorer.h)

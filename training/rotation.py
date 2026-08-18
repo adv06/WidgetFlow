@@ -6,7 +6,7 @@ def _variance(scores):
 
 
 def rank(results):
-    # results: {widget_id: [band-weighted score, ...]} -> ids, lowest variance first
+
     return sorted(results, key=lambda w: _variance(results[w]))
 
 
