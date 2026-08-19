@@ -45,10 +45,13 @@ def rollout_token_weights(r, tok, credit_tokens, *, alpha=3.0):
 
 
 def credit_weights(scored, tok, gt_path, *, alpha=3.0, max_tokens=None,
-                   min_delta=0.5, score_fn=None, verbose=False):
-
-
-    below = [x for x in scored if x.below_mean and x.bands]
+                   max_rollouts=None, min_delta=0.5, score_fn=None, verbose=False):
+    # credit the WORST-N below-mean rollouts (most negative advantage). max_rollouts
+    # caps how many get the (expensive) ablation; None = all below-mean.
+    below = sorted([x for x in scored if x.below_mean and x.bands],
+                   key=lambda x: x.reward)
+    if max_rollouts:
+        below = below[:max_rollouts]
     if not below:
         return {}
     weights = {}

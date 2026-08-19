@@ -1,6 +1,30 @@
 from __future__ import annotations
 import re
 
+# Cheap heuristic to prioritise WHICH tokens to spend the ablation budget on when
+# capped: colours + sizes move pixels most (proven by the credit routing), layout
+# next. Only reorders the cap; the ablation still MEASURES the real credit.
+_IMP_COLOUR = re.compile(
+    r"#[0-9a-fA-F]{3,}|^(bg|from|via|to|fill|stroke|text|border|ring|divide|accent|shadow)-"
+    r"(\[|slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|"
+    r"cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black)", re.I)
+_IMP_SIZE = re.compile(r"^-?(w|h|min-w|max-w|min-h|max-h|size|p|px|py|pt|pr|pb|pl|m|mx|my|mt|"
+                       r"mr|mb|ml|gap|inset|top|right|bottom|left|basis|space-[xy])-")
+_IMP_LAYOUT = re.compile(r"^(flex|grid|inline-flex|absolute|relative|fixed|sticky|items-|"
+                         r"justify-|content-|self-|place-|col-span|row-span|grid-cols|"
+                         r"grid-rows|order-|translate-|scale-|aspect-|object-)")
+
+
+def _importance(t):
+    v, k = t["value"], t["kind"]
+    if k in ("attr_colour", "attr_number"):            # SVG colour/number: high impact
+        return 3
+    if _IMP_COLOUR.search(v) or _IMP_SIZE.match(v):     # colour/size utility
+        return 3
+    if _IMP_LAYOUT.match(v) or k == "attr_drop":        # layout / opaque geometry (d, viewBox)
+        return 2
+    return 1                                            # rounded, shadow, text, misc
+
 def text_tokens(code: str, el, next_tag_start: int | None = None):
     a = el["end"]
     b = code.find("<", a) # by construction we cannot contain any tag 
@@ -37,9 +61,10 @@ def credit_tokens(code, elements, render_score, *, band_weights,
     n_all = len(cands)
     cands = [t for t in cands if t["value"] not in dead.get(t["owner"], ())]
     n_pruned = n_all - len(cands)
+    if max_tokens and len(cands) > max_tokens:
+        # keep the most-likely-impactful tokens (colour/size/layout), not first-by-position
+        cands = sorted(cands, key=lambda d: (-_importance(d), d["start"]))[:max_tokens]
     cands.sort(key=lambda d: d["start"])
-    if max_tokens:
-        cands = cands[:max_tokens]
 
     for t in cands:
         patched = code[:t["start"]] + t["replacement"] + code[t["end"]:]

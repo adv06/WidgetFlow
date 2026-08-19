@@ -6,9 +6,11 @@ from credit.credit import BandScorer, BANDS
 
 @torch.no_grad()
 def _greedy(policy, widget, max_new_tokens):
+    from training.policy import gen_mode
     enc = policy._inputs(widget)
     plen = enc["input_ids"].shape[1]
-    out = policy.model.generate(**enc, do_sample=False, max_new_tokens=max_new_tokens)
+    with gen_mode(policy.model):
+        out = policy.model.generate(**enc, do_sample=False, max_new_tokens=max_new_tokens)
     return policy.processor.decode(out[0, plen:], skip_special_tokens=True)
 
 

@@ -54,9 +54,13 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="stream only first N widgets (smoke)")
     ap.add_argument("--credit", type=int, default=1, help="1=credit-weight the DAPO loss")
     ap.add_argument("--credit_max_tokens", type=int, default=40, help="ablations/rollout cap")
+    ap.add_argument("--credit_rollouts", type=int, default=2, help="worst-N below-mean rollouts to credit/widget")
     ap.add_argument("--credit_alpha", type=float, default=3.0, help="peak token upweight")
     ap.add_argument("--max_new_tokens", type=int, default=2048, help="rollout length cap")
     ap.add_argument("--grad_ckpt", type=int, default=1, help="gradient checkpointing (0=faster gen)")
+    ap.add_argument("--sft", default=None, help="SFT adapter to init the trainable LoRA from")
+    ap.add_argument("--save_dir", default=None, help="save the trained adapter here each pass")
+    ap.add_argument("--probe_tokens", type=int, default=1536, help="greedy budget for the held-out probe")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -69,14 +73,14 @@ def main():
     pool = list(range(args.val_size, len(png)))
     val = [(image_of(i), png[i]) for i in val_idx]
 
-    policy = Policy.load(lora=True, gradient_checkpointing=bool(args.grad_ckpt),
+    policy = Policy.load(adapter=args.sft, lora=True, gradient_checkpointing=bool(args.grad_ckpt),
                          max_new_tokens=args.max_new_tokens)
     opt = torch.optim.AdamW([p for p in policy.model.parameters() if p.requires_grad], lr=args.lr)
 
     tf = TrainFilter(pool, size=args.train_size, seed=args.seed)
     ctrl = Controller()
 
-    baseline = metric_probe(policy, val, score_fn=score_bands)["bands"]
+    baseline = metric_probe(policy, val, score_fn=score_bands, max_new_tokens=args.probe_tokens)["bands"]
     print(f"[baseline] {fmt(baseline)}")
 
     for p in range(args.passes):
@@ -87,9 +91,15 @@ def main():
             scored = render_and_score(png[idx], rollouts, weights=ctrl.w, score_fn=score_bands)
             varmap[idx] = [s.reward for s in scored]
             credit = (credit_weights(scored, policy.tok, png[idx], alpha=args.credit_alpha,
-                                     max_tokens=args.credit_max_tokens, score_fn=score_bands)
+                                     max_tokens=args.credit_max_tokens,
+                                     max_rollouts=args.credit_rollouts, score_fn=score_bands)
                       if args.credit else {})
             loss = dapo_loss(policy, scored, credit=credit)
+            rs = varmap[idx]
+            nvalid = sum(1 for s in scored if s.bands)
+            print(f"[pass {p}] w{idx} valid {nvalid}/{len(rs)} reward~{sum(rs)/len(rs):.1f} "
+                  f"spread {max(rs)-min(rs):.1f} loss={None if loss is None else round(float(loss),4)} "
+                  f"credit={len(credit)}", flush=True)
             if loss is None:
                 continue
             (loss / args.grad_accum).backward()
@@ -99,10 +109,12 @@ def main():
         if pending:
             opt.step(); opt.zero_grad()
 
-        report = metric_probe(policy, val, baseline=baseline, delta=args.delta, score_fn=score_bands)
+        report = metric_probe(policy, val, baseline=baseline, delta=args.delta, score_fn=score_bands, max_new_tokens=args.probe_tokens)
         ctrl.update(report["bands"])
         print(f"[pass {p}] bands={fmt(report['bands'])} weights={fmt(ctrl.w)} "
-              f"passed={report['passed']}")
+              f"passed={report['passed']}", flush=True)
+        if args.save_dir:
+            policy.model.save_pretrained(args.save_dir)
         if report["passed"]:
             print("[stop] all bands >= baseline + delta -> run eval on 1000")
             break
