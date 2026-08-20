@@ -1,1 +1,27 @@
-/data
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Target widget PNGs — re-materialized from the HF benchmark by training/train.py.
+# (heldout60 is small; un-ignore the next line's exception if you want the eval set in-repo.)
+/data/
+# !/data/heldout60/
+
+# Training outputs: LoRA adapters, checkpoints, logs, curves
+/runs/
+
+# Local scratch / presentation artifacts (optional — delete these lines to keep them)
+*.pptx
+Screenshot*.png
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

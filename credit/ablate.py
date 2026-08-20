@@ -1,9 +1,6 @@
 from __future__ import annotations
 import re
 
-# Cheap heuristic to prioritise WHICH tokens to spend the ablation budget on when
-# capped: colours + sizes move pixels most (proven by the credit routing), layout
-# next. Only reorders the cap; the ablation still MEASURES the real credit.
 _IMP_COLOUR = re.compile(
     r"#[0-9a-fA-F]{3,}|^(bg|from|via|to|fill|stroke|text|border|ring|divide|accent|shadow)-"
     r"(\[|slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|"

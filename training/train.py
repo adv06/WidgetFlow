@@ -56,6 +56,8 @@ def main():
     ap.add_argument("--credit_max_tokens", type=int, default=40, help="ablations/rollout cap")
     ap.add_argument("--credit_rollouts", type=int, default=2, help="worst-N below-mean rollouts to credit/widget")
     ap.add_argument("--credit_alpha", type=float, default=3.0, help="peak token upweight")
+    ap.add_argument("--reward_bands", default=None,
+                    help="reward ONLY these bands, equal fixed weight, Controller off (e.g. style,perceptual)")
     ap.add_argument("--max_new_tokens", type=int, default=2048, help="rollout length cap")
     ap.add_argument("--grad_ckpt", type=int, default=1, help="gradient checkpointing (0=faster gen)")
     ap.add_argument("--sft", default=None, help="SFT adapter to init the trainable LoRA from")
@@ -79,6 +81,11 @@ def main():
 
     tf = TrainFilter(pool, size=args.train_size, seed=args.seed)
     ctrl = Controller()
+    fixed_w = None
+    if args.reward_bands:
+        sel = {b.strip() for b in args.reward_bands.split(",")}
+        fixed_w = {b: (1.0 / len(sel) if b in sel else 0.0) for b in ctrl.w}
+        print(f"[reward] fixed bands={sorted(sel)} weights={fmt(fixed_w)} (Controller OFF)", flush=True)
 
     baseline = metric_probe(policy, val, score_fn=score_bands, max_new_tokens=args.probe_tokens)["bands"]
     print(f"[baseline] {fmt(baseline)}")
@@ -88,7 +95,7 @@ def main():
         widgets = tf.training_set[: args.max_widgets or None]
         for idx in widgets:
             rollouts = policy.rollout(image_of(idx), n=args.K)
-            scored = render_and_score(png[idx], rollouts, weights=ctrl.w, score_fn=score_bands)
+            scored = render_and_score(png[idx], rollouts, weights=(fixed_w or ctrl.w), score_fn=score_bands)
             varmap[idx] = [s.reward for s in scored]
             credit = (credit_weights(scored, policy.tok, png[idx], alpha=args.credit_alpha,
                                      max_tokens=args.credit_max_tokens,
@@ -110,8 +117,9 @@ def main():
             opt.step(); opt.zero_grad()
 
         report = metric_probe(policy, val, baseline=baseline, delta=args.delta, score_fn=score_bands, max_new_tokens=args.probe_tokens)
-        ctrl.update(report["bands"])
-        print(f"[pass {p}] bands={fmt(report['bands'])} weights={fmt(ctrl.w)} "
+        if fixed_w is None:
+            ctrl.update(report["bands"])
+        print(f"[pass {p}] bands={fmt(report['bands'])} weights={fmt(fixed_w or ctrl.w)} "
               f"passed={report['passed']}", flush=True)
         if args.save_dir:
             policy.model.save_pretrained(args.save_dir)

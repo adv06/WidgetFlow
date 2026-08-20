@@ -1,26 +1,3 @@
-"""Reward scoring: official bench metrics, plus our aggregation into bands.
-
-Two layers, deliberately kept distinct inside this file:
-
-  score()     -> the 11 raw sub-metrics, computed by `widget_quality` itself.
-                 Pure passthrough. If a number here disagrees with the official
-                 widget2code-bench CLI, that is a bug.
-
-  to_bands()  -> the 5 band numbers used for RL. The bench never produces these;
-                 "style = 58.8" is OUR aggregation of three sub-metrics, and it
-                 is a design choice we own.
-
-3.0 ran a *different* metric in-loop (a JSX-source-vs-cached-OCR proxy for text,
-a pinned fork for layout) and needed a "proxy gap" canary to watch the drift.
-Here the in-loop scorer and the reported scorer are the same code, so probe
-numbers are bench numbers.
-
-Costs that shape the API:
-  - legibility runs EasyOCR on BOTH images. The GT side is identical across all
-    K rollouts of a widget and across every pass, so it is cached by image path.
-  - perceptual loads an LPIPS VGG model. Loaded once, reused.
-"""
-
 from __future__ import annotations
 
 import json
